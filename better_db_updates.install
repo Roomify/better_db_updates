@@ -1,0 +1,90 @@
+<?php
+
+/**
+ * @file
+ * Install functions for Better db Update API module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function better_db_updates_install() {
+  // Set the schema back before the current Better db Updates update hook.
+  drupal_set_installed_schema_version('better_db_updates', 6999);
+}
+
+/**
+ * Implements hook_schema().
+ */
+function better_db_updates_schema() {
+  $schema = array();
+
+  $schema['better_db_updates'] = array(
+    'fields' => array(
+      'timestamp' => array(
+        'description' => 'The Unix timestamp.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'module_name' => array(
+        'description' => 'The name of the module.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'update_filename' => array(
+        'description' => 'The filename of the update.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+    ),
+    'primary key' => array('module_name', 'update_filename'),
+  );
+
+  return $schema;
+}
+
+/**
+ * Trigger all Better DB Updates.
+ */
+function better_db_updates_update_7000() {
+  $directories = array();
+
+  foreach (module_implements('better_db_updates_directory') as $module) {
+    $function = $module . '_better_db_updates_directory';
+    $result = $function();
+    if ($result && is_string($result)) {
+      $directories[$module] = drupal_get_path('module', $module) . '/' . $result;
+    }
+  }
+
+  $all_files = array();
+
+  $extension = 'inc';
+  foreach ($directories as $module => $path) {
+    $all_files[$module] = file_scan_directory($path, '/\.' . $extension . '$/', array('key' => 'name'));
+  }
+
+  foreach ($all_files as $module => $updates) {
+    foreach ($updates as $info) {
+      if (empty(db_select('better_db_updates', 'b')->fields('b', array())->condition('module_name', $module)->condition('update_filename', $info->name)->execute()->fetchAll())) {
+
+        require_once DRUPAL_ROOT . '/' . $info->uri;
+
+        $record = array(
+          'timestamp' => REQUEST_TIME,
+          'module_name' => $module,
+          'update_filename' => $info->name,
+        );
+        drupal_write_record('better_db_updates', $record);
+      }
+    }
+  }
+
+  // Set the schema version back to before the current Better DB Updates update hook.
+  drupal_set_installed_schema_version('better_db_updates', 6999);
+}
