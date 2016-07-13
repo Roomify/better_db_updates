@@ -55,11 +55,16 @@ function better_db_updates_form_update_script_selection_form_alter(&$form, &$for
     }
 
     if (!empty($items)) {
-      $form['start'][$module . '_updates'] = array(
-        '#theme' => 'item_list',
-        '#items' => $items,
-        '#title' => $module . ' module',
-      );
+      if (isset($form['start'][$module . '_updates'])) {
+        $form['start'][$module . '_updates']['#items'] = array_merge($form['start'][$module . '_updates']['#items'], $items);
+      }
+      else {
+        $form['start'][$module . '_updates'] = array(
+          '#theme' => 'item_list',
+          '#items' => $items,
+          '#title' => $module . ' module',
+        );
+      }
     }
   }
 
