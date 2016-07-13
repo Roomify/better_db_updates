@@ -47,7 +47,7 @@ function better_db_updates_form_update_script_selection_form_alter(&$form, &$for
       if (empty(db_select('better_db_updates', 'b')->fields('b', array())->condition('module_name', $module)->condition('update_filename', $info->name)->execute()->fetchAll())) {
 
         $docblock = better_db_updates_get_file_doc_block($info->uri);
-        $update_description = better_db_updates_parse_block($docblock);
+        $update_description = $key . ' - ' . better_db_updates_parse_block($docblock);
 
         $items[$key] = $update_description;
         $count++;
