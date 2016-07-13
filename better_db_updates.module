@@ -38,29 +38,18 @@ function better_db_updates_form_update_script_selection_form_alter(&$form, &$for
 
   unset($form['start']['better_db_updates_updates']);
 
-  $directories = array();
-
-  foreach (module_implements('better_db_updates_directory') as $module) {
-    $function = $module . '_better_db_updates_directory';
-    $result = $function();
-    if ($result && is_string($result)) {
-      $directories[$module] = drupal_get_path('module', $module) . '/' . $result;
-    }
-  }
-
-  $all_files = array();
-
-  $extension = 'inc';
-  foreach ($directories as $module => $path) {
-    $all_files[$module] = file_scan_directory($path, '/\.' . $extension . '$/', array('key' => 'name'));
-  }
+  $all_files = better_db_updates_get_updates();
 
   foreach ($all_files as $module => $updates) {
     $items = array();
 
     foreach ($updates as $key => $info) {
       if (empty(db_select('better_db_updates', 'b')->fields('b', array())->condition('module_name', $module)->condition('update_filename', $info->name)->execute()->fetchAll())) {
-        $items[$key] = 'Update ' . $key;
+
+        $docblock = better_db_updates_get_file_doc_block($info->uri);
+        $update_description = better_db_updates_parse_block($docblock);
+
+        $items[$key] = $update_description;
         $count++;
       }
     }
@@ -83,4 +72,80 @@ function better_db_updates_form_update_script_selection_form_alter(&$form, &$for
     unset($form['help']);
     unset($form['actions']);
   }
+}
+
+/**
+ * Get all better db updates.
+ *
+ * @return array
+ */
+function better_db_updates_get_updates() {
+  $directories = array();
+
+  foreach (module_implements('better_db_updates_directory') as $module) {
+    $function = $module . '_better_db_updates_directory';
+    $result = $function();
+    if ($result && is_string($result)) {
+      $directories[$module] = drupal_get_path('module', $module) . '/' . $result;
+    }
+  }
+
+  $all_files = array();
+
+  $extension = 'inc';
+  foreach ($directories as $module => $path) {
+    $all_files[$module] = file_scan_directory($path, '/\.' . $extension . '$/', array('key' => 'name'));
+  }
+
+  return $all_files;
+}
+
+/**
+ * Get doc block from a given file.
+ *
+ * @param $file
+ * @return string
+ */
+function better_db_updates_get_file_doc_block($file) {
+  $doc_comments = array_filter(
+    token_get_all(file_get_contents($file)), function($entry) {
+      return $entry[0] == T_DOC_COMMENT;
+    }
+  );
+
+  $file_doc_comment = array_shift($doc_comments);
+
+  return $file_doc_comment[1];
+}
+
+/**
+ * Parse a given doc block and return the description text.
+ *
+ * @param $docblock
+ * @return string
+ */
+function better_db_updates_parse_block($docblock) {
+  $description = '';
+
+  // split at each line
+  foreach (preg_split("/(\r?\n)/", $docblock) as $line){
+    // if starts with an asterisk
+    if (preg_match('/^(?=\s+?\*[^\/])(.+)/', $line, $matches)) {
+      $info = $matches[1];
+
+      // remove wrapping whitespace
+      $info = trim($info);
+      // remove leading asterisk
+      $info = preg_replace('/^(\*\s+?)/', '', $info);
+
+      // if it doesn't start with an "@" symbol
+      // then add to the description
+      if ($info[0] !== "@") {
+        $description .= "\n$info";
+        continue;
+      }
+    }
+  }
+
+  return $description;
 }

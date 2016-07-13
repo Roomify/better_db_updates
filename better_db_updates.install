@@ -11,6 +11,19 @@
 function better_db_updates_install() {
   // Set the schema back before the current Better db Updates update hook.
   drupal_set_installed_schema_version('better_db_updates', 6999);
+
+  $all_files = better_db_updates_get_updates();
+
+  foreach ($all_files as $module => $updates) {
+    foreach ($updates as $info) {
+      $record = array(
+        'timestamp' => 0,
+        'module_name' => $module,
+        'update_filename' => $info->name,
+      );
+      drupal_write_record('better_db_updates', $record);
+    }
+  }
 }
 
 /**
@@ -52,22 +65,7 @@ function better_db_updates_schema() {
  * Trigger all Better DB Updates.
  */
 function better_db_updates_update_7000() {
-  $directories = array();
-
-  foreach (module_implements('better_db_updates_directory') as $module) {
-    $function = $module . '_better_db_updates_directory';
-    $result = $function();
-    if ($result && is_string($result)) {
-      $directories[$module] = drupal_get_path('module', $module) . '/' . $result;
-    }
-  }
-
-  $all_files = array();
-
-  $extension = 'inc';
-  foreach ($directories as $module => $path) {
-    $all_files[$module] = file_scan_directory($path, '/\.' . $extension . '$/', array('key' => 'name'));
-  }
+  $all_files = better_db_updates_get_updates();
 
   foreach ($all_files as $module => $updates) {
     foreach ($updates as $info) {

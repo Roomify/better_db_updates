@@ -6,8 +6,8 @@
  */
 
 /**
- *
+ * Return relative path of updates directory.
  */
 function hook_better_db_updates_directory() {
-
+  return 'updates';
 }

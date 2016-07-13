@@ -1,3 +1,8 @@
 <?php
 
-drupal_set_message('1 update');
+/**
+ * @file
+ * Example of first better db update.
+ */
+
+drupal_set_message('First example of better db update');
