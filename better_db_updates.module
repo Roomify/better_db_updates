@@ -27,6 +27,38 @@ function better_db_updates_batch_alter(&$batch) {
 }
 
 /**
+ * Implements hook_modules_installed().
+ */
+function better_db_updates_modules_installed($modules) {
+  $all_files = better_db_updates_get_updates($modules);
+
+  foreach ($all_files as $module => $updates) {
+    foreach ($updates as $info) {
+      $record = array(
+        'timestamp' => 0,
+        'module_name' => $module,
+        'update_filename' => $info->name,
+      );
+
+      \Drupal::database()->insert('better_db_updates')
+        ->fields($record)
+        ->execute();
+    }
+  }
+}
+
+/**
+ * Implements hook_modules_uninstalled().
+ */
+function better_db_updates_modules_uninstalled($modules) {
+  foreach ($modules as $module) {
+    db_delete('better_db_updates')
+      ->condition('module_name', $module)
+      ->execute();
+  }
+}
+
+/**
  * Implements hook_better_db_updates_directory().
  */
 function better_db_updates_better_db_updates_directory() {
@@ -36,16 +68,19 @@ function better_db_updates_better_db_updates_directory() {
 /**
  * Get all better db updates.
  *
+ * @param $modules
  * @return array
  */
-function better_db_updates_get_updates() {
+function better_db_updates_get_updates($modules = array()) {
   $directories = array();
 
   foreach (\Drupal::moduleHandler()->getImplementations('better_db_updates_directory') as $module) {
-    $function = $module . '_better_db_updates_directory';
-    $result = $function();
-    if ($result && is_string($result)) {
-      $directories[$module] = drupal_get_path('module', $module) . '/' . $result;
+    if (empty($modules) || in_array($module, $modules)) {
+      $function = $module . '_better_db_updates_directory';
+      $result = $function();
+      if ($result && is_string($result)) {
+        $directories[$module] = drupal_get_path('module', $module) . '/' . $result;
+      }
     }
   }
 
