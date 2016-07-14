@@ -152,5 +152,5 @@ function better_db_updates_parse_block($docblock) {
     }
   }
 
-  return $description;
+  return trim($description, "\n");
 }
