@@ -10,31 +10,14 @@
 use Drush\Log\LogLevel;
 
 /**
- * Global flag to identify update.php run, and so avoid various unwanted
- * operations, such as hook_init() and hook_exit() invokes, css/js preprocessing
- * and translation, and solve some theming issues. This flag is checked on several
- * places in Drupal code (not just update.php).
- */
-define('MAINTENANCE_MODE', 'update');
-
-/**
  * Drupal's update.inc has functions that are in previous update_X.inc files
  * for example, update_check_incompatibility() which can prove useful when
  * enabling modules.
  */
 require_once DRUSH_DRUPAL_CORE . '/includes/update.inc';
-/**
- * Returns (and optionally stores) extra requirements that only apply during
- * particular parts of the update.php process.
- */
-function update_extra_requirements($requirements = NULL) {
-  static $extra_requirements = array();
-  if (isset($requirements)) {
-    $extra_requirements += $requirements;
-  }
-  return $extra_requirements;
-}
 
+use Drupal\Core\Utility\Error;
+use Drupal\Core\Entity\EntityStorageException;
 /**
  * Perform one update and store the results which will later be displayed on
  * the finished page.
@@ -64,6 +47,8 @@ function drush_update_do_one($module, $number, $dependency_map,  &$context) {
 
   $context['log'] = FALSE;
 
+  \Drupal::moduleHandler()->loadInclude($module, 'install');
+
   $ret = array();
   if (function_exists($function)) {
     try {
@@ -73,13 +58,6 @@ function drush_update_do_one($module, $number, $dependency_map,  &$context) {
 
       drush_log("Executing " . $function);
       $ret['results']['query'] = $function($context['sandbox']);
-
-      // If the update hook returned a status message (common in batch updates),
-      // show it to the user.
-      if ($ret['results']['query']) {
-        drush_log($ret['results']['query'], LogLevel::OK);
-      }
-
       $ret['results']['success'] = TRUE;
     }
     // @TODO We may want to do different error handling for different exception
@@ -92,6 +70,10 @@ function drush_update_do_one($module, $number, $dependency_map,  &$context) {
     if ($context['log']) {
       $ret['queries'] = Database::getLog($function);
     }
+  }
+  else {
+    $ret['#abort'] = array('success' => FALSE);
+    drush_set_error('DRUSH_UPDATE_FUNCTION_NOT_FOUND', dt('Update function @function not found', array('@function' => $function)));
   }
 
   if (isset($context['sandbox']['#finished'])) {
@@ -117,153 +99,106 @@ function drush_update_do_one($module, $number, $dependency_map,  &$context) {
     drupal_set_installed_schema_version($module, $number);
   }
 
-  $context['message'] = 'Performed update: ' . $function;
-}
-
-/**
- * Check update requirements and report any errors.
- */
-function update_check_requirements() {
-  $warnings = FALSE;
-
-  // Check the system module and update.php requirements only.
-  $requirements = system_requirements('update');
-  $requirements += update_extra_requirements();
-
-  // If there are issues, report them.
-  foreach ($requirements as $requirement) {
-    if (isset($requirement['severity']) && $requirement['severity'] != REQUIREMENT_OK) {
-      $message = isset($requirement['description']) ? $requirement['description'] : '';
-      if (isset($requirement['value']) && $requirement['value']) {
-        $message .= ' (Currently using ' . $requirement['title'] . ' ' . $requirement['value'] . ')';
-      }
-      $warnings = TRUE;
-      drupal_set_message($message, LogLevel::WARNING);
-    }
-  }
-  return $warnings;
-}
-
-
-function update_main_prepare() {
-  // Some unavoidable errors happen because the database is not yet up-to-date.
-  // Our custom error handler is not yet installed, so we just suppress them.
-  drush_errors_off();
-
-  // We prepare a minimal bootstrap for the update requirements check to avoid
-  // reaching the PHP memory limit.
-  $core = DRUSH_DRUPAL_CORE;
-  require_once $core . '/includes/bootstrap.inc';
-  require_once $core . '/includes/common.inc';
-  require_once $core . '/includes/file.inc';
-  require_once $core . '/includes/entity.inc';
-  include_once $core . '/includes/unicode.inc';
-
-  update_prepare_d7_bootstrap();
-  drupal_bootstrap(DRUPAL_BOOTSTRAP_SESSION);
-
-  require_once $core . '/includes/install.inc';
-  require_once $core . '/modules/system/system.install';
-
-  // Load module basics.
-  include_once $core . '/includes/module.inc';
-  $module_list['system']['filename'] = 'modules/system/system.module';
-  module_list(TRUE, FALSE, FALSE, $module_list);
-  drupal_load('module', 'system');
-
-  // Reset the module_implements() cache so that any new hook implementations
-  // in updated code are picked up.
-  module_implements('', FALSE, TRUE);
-
-  // Set up $language, since the installer components require it.
-  drupal_language_initialize();
-
-  // Set up theme system for the maintenance page.
-  drupal_maintenance_theme();
-
-  // Check the update requirements for Drupal.
-  update_check_requirements();
-
-  // update_fix_d7_requirements() needs to run before bootstrapping beyond path.
-  // So bootstrap to DRUPAL_BOOTSTRAP_LANGUAGE then include unicode.inc.
-  drupal_bootstrap(DRUPAL_BOOTSTRAP_LANGUAGE);
-
-  update_fix_d7_requirements();
-
-  // Clear the module_implements() cache before the full bootstrap. The calls
-  // above to drupal_maintenance_theme() and update_check_requirements() have
-  // invoked hooks before all modules have actually been loaded by the full
-  // bootstrap. This means that the module_implements() results for any hooks
-  // that have been invoked, including hook_module_implements_alter(), is a
-  // smaller set of modules than should be returned normally.
-  // @see https://github.com/drush-ops/drush/pull/399
-  module_implements('', FALSE, TRUE);
-
-  // Now proceed with a full bootstrap.
-
-  drush_bootstrap(DRUSH_BOOTSTRAP_DRUPAL_FULL);
-  drupal_maintenance_theme();
-
-  drush_errors_on();
-
-  include_once DRUPAL_ROOT . '/includes/batch.inc';
-  drupal_load_updates();
-
-  update_fix_compatibility();
-
-   // Change query-strings on css/js files to enforce reload for all users.
-  _drupal_flush_css_js();
-  // Flush the cache of all data for the update status module.
-  if (db_table_exists('cache_update')) {
-    cache_clear_all('*', 'cache_update', TRUE);
-  }
-
-  module_list(TRUE, FALSE, TRUE);
+  $context['message'] = 'Performing ' . $function;
 }
 
 function update_main() {
-  update_main_prepare();
+  // In D8, we expect to be in full bootstrap.
+  drush_bootstrap_to_phase(DRUSH_BOOTSTRAP_DRUPAL_FULL);
 
-  list($pending, $start) = updatedb_status();
+  require_once DRUPAL_ROOT . '/core/includes/install.inc';
+  require_once DRUPAL_ROOT . '/core/includes/update.inc';
+  drupal_load_updates();
+  update_fix_compatibility();
 
-  if ($pending) {
-    // @todo get table header working.
-    // $headers = array(dt('Module'), dt('ID'), dt('Description'));
-    drush_print_table($pending);
+  // Pending hook_update_N() implementations.
+  $pending = update_get_update_list();
+
+  if (isset($pending['better_db_updates']['pending'][8001])) {
+    $all_files = better_db_updates_get_updates();
+    foreach ($all_files as $module => $updates) {
+      foreach ($updates as $key => $info) {
+        if (empty(db_select('better_db_updates', 'b')->fields('b', array())->condition('module_name', $module)->condition('update_filename', $info->name)->execute()->fetchAll())) {
+
+          $docblock = better_db_updates_get_file_doc_block($info->uri);
+          $update_description = better_db_updates_parse_block($docblock);
+
+          $pending[$module]['pending'][$key] = $key . ' -   ' . $update_description;
+
+          if (!isset($pending[$module]['start'])) {
+            $pending[$module]['start'] = 9999;
+          }
+        }
+      }
+    }
+    unset($pending['better_db_updates']['pending'][8001]);
+  }
+
+  // Pending hook_post_update_X() implementations.
+  $post_updates = \Drupal::service('update.post_update_registry')->getPendingUpdateInformation();
+
+  $start = array();
+
+  $change_summary = [];
+  if (drush_get_option('entity-updates', FALSE)) {
+    $change_summary = \Drupal::entityDefinitionUpdateManager()->getChangeSummary();
+  }
+
+  // Print a list of pending updates for this module and get confirmation.
+  if (count($pending) || count($change_summary) || count($post_updates)) {
+    drush_print(dt('The following updates are pending:'));
+    drush_print();
+
+    foreach ($change_summary as $entity_type_id => $changes) {
+      drush_print($entity_type_id . ' entity type : ');
+      foreach ($changes as $change) {
+        drush_print(strip_tags($change), 2);
+      }
+    }
+
+    foreach (array('update', 'post_update') as $update_type) {
+      $updates = $update_type == 'update' ? $pending : $post_updates;
+      foreach ($updates as $module => $updates) {
+        if (isset($updates['start'])) {
+          drush_print($module . ' module : ');
+          if (!empty($updates['pending'])) {
+            $start += [$module => array()];
+
+            $start[$module] = array_merge($start[$module], $updates['pending']);
+            foreach ($updates['pending'] as $update) {
+              drush_print(strip_tags($update), 2);
+            }
+          }
+          drush_print();
+        }
+      }
+    }
+
     if (!drush_confirm(dt('Do you wish to run all pending updates?'))) {
       return drush_user_abort();
     }
+
     drush_update_batch($start);
   }
   else {
     drush_log(dt("No database updates required"), LogLevel::SUCCESS);
   }
 
-  return count($pending);
+  return count($pending) + count($change_summary) + count($post_updates);
 }
 
 function _update_batch_command($id) {
-  update_main_prepare();
+  // In D8, we expect to be in full bootstrap.
+  drush_bootstrap_to_phase(DRUSH_BOOTSTRAP_DRUPAL_FULL);
+
   drush_batch_command($id);
 }
 
 /**
  * Start the database update batch process.
- *
- * @param $start
- *   An array of all the modules and which update to start at.
- * @param $redirect
- *   Path to redirect to when the batch has finished processing.
- * @param $url
- *   URL of the batch processing page (should only be used for separate
- *   scripts like update.php).
- * @param $batch
- *   Optional parameters to pass into the batch API.
- * @param $redirect_callback
- *   (optional) Specify a function to be called to redirect to the progressive
- *   processing page.
  */
-function drush_update_batch($start) {
+function drush_update_batch() {
+  $start = drush_get_update_list();
   // Resolve any update dependencies to determine the actual updates that will
   // be run and the order they will be run in.
   $updates = update_resolve_dependencies($start);
@@ -278,6 +213,7 @@ function drush_update_batch($start) {
   }
 
   $operations = array();
+
   foreach ($updates as $update) {
     if ($update['allowed']) {
       // Set the installed version of each module so updates will start at the
@@ -293,6 +229,25 @@ function drush_update_batch($start) {
     }
   }
 
+  // Apply post update hooks.
+  $post_updates = \Drupal::service('update.post_update_registry')->getPendingUpdateFunctions();
+  if ($post_updates) {
+    $operations[] = ['drush_drupal_cache_clear_all', []];
+    foreach ($post_updates as $function) {
+      $operations[] = ['update_invoke_post_update', [$function]];
+    }
+  }
+
+  // Lastly, perform entity definition updates, which will update storage
+  // schema if needed. If module update functions need to work with specific
+  // entity schema they should call the entity update service for the specific
+  // update themselves.
+  // @see \Drupal\Core\Entity\EntityDefinitionUpdateManagerInterface::applyEntityUpdate()
+  // @see \Drupal\Core\Entity\EntityDefinitionUpdateManagerInterface::applyFieldUpdate()
+  if (drush_get_option('entity-updates', FALSE) &&  \Drupal::entityDefinitionUpdateManager()->needsUpdates()) {
+    $operations[] = array('drush_update_entity_definitions', array());
+  }
+
   $batch['operations'] = $operations;
   $batch += array(
     'title' => 'Updating',
@@ -302,13 +257,76 @@ function drush_update_batch($start) {
     'file' => 'includes/update.inc',
   );
   batch_set($batch);
+  \Drupal::service('state')->set('system.maintenance_mode', TRUE);
   drush_backend_batch_process('updatedb-batch-process');
+  \Drupal::service('state')->set('system.maintenance_mode', FALSE);
 }
 
+/**
+ * Apply entity schema updates.
+ */
+function drush_update_entity_definitions(&$context) {
+  try {
+    \Drupal::entityDefinitionUpdateManager()->applyUpdates();
+  }
+  catch (EntityStorageException $e) {
+    watchdog_exception('update', $e);
+    $variables = Error::decodeException($e);
+    unset($variables['backtrace']);
+    // The exception message is run through
+    // \Drupal\Component\Utility\SafeMarkup::checkPlain() by
+    // \Drupal\Core\Utility\Error::decodeException().
+    $ret['#abort'] = array('success' => FALSE, 'query' => t('%type: !message in %function (line %line of %file).', $variables));
+    $context['results']['core']['update_entity_definitions'] = $ret;
+    $context['results']['#abort'][] = 'update_entity_definitions';
+  }
+}
 
+// Copy of protected \Drupal\system\Controller\DbUpdateController::getModuleUpdates.
+function drush_get_update_list() {
+  $return = array();
+  $updates = update_get_update_list();
+  foreach ($updates as $module => $update) {
+    $return[$module] = $update['start'];
+  }
 
+  return $return;
+}
+
+/**
+ * Process and display any returned update output.
+ *
+ * @see \Drupal\system\Controller\DbUpdateController::batchFinished()
+ * @see \Drupal\system\Controller\DbUpdateController::results()
+ */
 function drush_update_finished($success, $results, $operations) {
-  // Nothing to do here. All caches already cleared. Kept as documentation of 'finished' callback.
+
+  if (!drush_get_option('cache-clear', TRUE)) {
+    drush_log(dt("Skipping cache-clear operation due to --cache-clear=0 option."), LogLevel::WARNING);
+  }
+  else {
+    drupal_flush_all_caches();
+  }
+
+  foreach ($results as $module => $updates) {
+    if ($module != '#abort') {
+      foreach ($updates as $number => $queries) {
+        foreach ($queries as $query) {
+          // If there is no message for this update, don't show anything.
+          if (empty($query['query'])) {
+            continue;
+          }
+
+          if ($query['success']) {
+            drush_log(strip_tags($query['query']));
+          }
+          else {
+            drush_set_error(dt('Failed: ') . strip_tags($query['query']));
+          }
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -319,31 +337,16 @@ function drush_update_finished($success, $results, $operations) {
 function updatedb_status() {
   $pending = update_get_update_list();
 
-  if (isset($pending['better_db_updates']['pending'][7000])) {
-    $all_files = better_db_updates_get_updates();
-
-    foreach ($all_files as $module => $updates) {
-      foreach ($updates as $key => $info) {
-        if (empty(db_select('better_db_updates', 'b')->fields('b', array())->condition('module_name', $module)->condition('update_filename', $info->name)->execute()->fetchAll())) {
-
-          $docblock = better_db_updates_get_file_doc_block($info->uri);
-          $update_description = better_db_updates_parse_block($docblock);
-
-          $pending[$module]['pending'][$key] = $update_description;
-
-          if (!isset($pending[$module]['start'])) {
-            $pending[$module]['start'] = 9999;
-          }
-        }
-      }
-    }
-
-    unset($pending['better_db_updates']['pending'][7000]);
-  }
-
   $return = array();
   // Ensure system module's updates run first.
   $start['system'] = array();
+
+  foreach (\Drupal::entityDefinitionUpdateManager()->getChangeSummary() as $entity_type_id => $changes) {
+    foreach ($changes as $change) {
+      $return[] = array(
+        'module' => dt('@type entity type', array('@type' => $entity_type_id)), 'update_id' => '', 'description' => strip_tags($change));
+    }
+  }
 
   // Print a list of pending updates for this module and get confirmation.
   foreach ($pending as $module => $updates) {
@@ -358,5 +361,47 @@ function updatedb_status() {
       }
     }
   }
+
   return array($return, $start);
+}
+
+/**
+ * Apply pending entity schema updates.
+ */
+function entity_updates_main() {
+  $change_summary = \Drupal::entityDefinitionUpdateManager()->getChangeSummary();
+  if (!empty($change_summary)) {
+    drush_print(dt('The following updates are pending:'));
+    drush_print();
+
+    foreach ($change_summary as $entity_type_id => $changes) {
+      drush_print($entity_type_id . ' entity type : ');
+      foreach ($changes as $change) {
+        drush_print(strip_tags($change), 2);
+      }
+    }
+
+    if (!drush_confirm(dt('Do you wish to run all pending updates?'))) {
+      return drush_user_abort();
+    }
+
+    $operations[] = array('drush_update_entity_definitions', array());
+
+
+    $batch['operations'] = $operations;
+    $batch += array(
+      'title' => 'Updating',
+      'init_message' => 'Starting updates',
+      'error_message' => 'An unrecoverable error has occurred. You can find the error message below. It is advised to copy it to the clipboard for reference.',
+      'finished' => 'drush_update_finished',
+      'file' => 'includes/update.inc',
+    );
+    batch_set($batch);
+    \Drupal::service('state')->set('system.maintenance_mode', TRUE);
+    drush_backend_batch_process('updatedb-batch-process');
+    \Drupal::service('state')->set('system.maintenance_mode', FALSE);
+  }
+  else {
+    drush_log(dt("No entity schema updates required"), LogLevel::SUCCESS);
+  }
 }

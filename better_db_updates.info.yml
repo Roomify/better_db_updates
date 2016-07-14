@@ -1,0 +1,4 @@
+name: Better db updates
+type: module
+description: Adds 'hook_better_db_updates_directory' for better db updates.
+core: 8.x

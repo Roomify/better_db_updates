@@ -1,3 +1,0 @@
-name = Better db updates
-description = Adds 'hook_better_db_updates_directory' for better db updates.
-core = 7.x
