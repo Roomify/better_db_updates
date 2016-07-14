@@ -17,9 +17,9 @@ function better_db_updates_drush_command() {
  * Callback for the better-updatedb command.
  */
 function drush_core_better_updatedb() {
-	require_once realpath(__DIR__) . '/includes/update.inc';
+  require_once realpath(__DIR__) . '/includes/update.inc';
 
-	update_main();
+  update_main();
 }
 
 /**
@@ -27,7 +27,7 @@ function drush_core_better_updatedb() {
  */
 function better_db_updates_drush_command_alter(&$command) {
   if ($command['command'] == 'updatedb') {
-  	$command['command'] = 'better-updatedb';
+    $command['command'] = 'better-updatedb';
     $command['command-hook'] = 'better-updatedb';
     drush_set_command($command);
   }
