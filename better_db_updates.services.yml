@@ -1,0 +1,5 @@
+services:
+  better_db_updates_event_subscriber:
+    class: Drupal\better_db_updates\EventSubscriber\BetterDBUpdatesSubscriber
+    tags:
+      - {name: event_subscriber}
