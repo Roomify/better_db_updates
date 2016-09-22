@@ -56,7 +56,13 @@ function better_db_updates_update_7000() {
 
   foreach ($all_files as $module => $updates) {
     foreach ($updates as $info) {
-      if (empty(db_select('better_db_updates', 'b')->fields('b', array())->condition('module_name', $module)->condition('update_filename', $info->name)->execute()->fetchAll())) {
+      $update_exists = db_select('better_db_updates', 'b')
+        ->fields('b', array())
+        ->condition('module_name', $module)
+        ->condition('update_filename', $info->name)
+        ->execute()
+        ->fetchAll();
+      if (empty($update_exists)) {
 
         require_once DRUPAL_ROOT . '/' . $info->uri;
 
