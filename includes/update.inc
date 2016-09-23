@@ -324,8 +324,13 @@ function updatedb_status() {
 
     foreach ($all_files as $module => $updates) {
       foreach ($updates as $key => $info) {
-        if (empty(db_select('better_db_updates', 'b')->fields('b', array())->condition('module_name', $module)->condition('update_filename', $info->name)->execute()->fetchAll())) {
-
+        $update_exists = db_select('better_db_updates', 'b')
+                          ->fields('b', array())
+                          ->condition('module_name', $module)
+                          ->condition('update_filename', $info->name)
+                          ->execute()
+                          ->fetchAll();
+        if (empty($update_exists)) {
           $docblock = better_db_updates_get_file_doc_block($info->uri);
           $update_description = better_db_updates_parse_block($docblock);
 
